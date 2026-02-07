@@ -1,0 +1,24 @@
+{
+  "name": "revealjs-sdk",
+  "version": "1.0.0",
+  "description": "GO FETCH FIDO fundraising deck (Reveal.js)",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "http-server -p 8000 -c-1 .",
+    "process:images": "node scripts/process-images.js",
+    "build:site": "node scripts/build-site.js",
+    "export:pdf": "node scripts/export-pdf.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "reveal.js": "^5.2.1"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "puppeteer": "^24.2.0",
+    "sharp": "^0.34.3"
+  }
+}

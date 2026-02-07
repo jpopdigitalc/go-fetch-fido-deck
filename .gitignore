@@ -1,0 +1,11 @@
+node_modules/
+dist/
+
+# GitHub Pages build output
+# (keep docs/ committed, ignore any OS metadata inside)
+docs/**/.DS_Store
+
+.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
