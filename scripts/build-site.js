@@ -40,6 +40,8 @@ function main() {
   // Website (published at /)
   const siteHtml = fs.readFileSync(path.join(root, "site", "index.html"), "utf8");
   const rewrittenSite = rewriteIndexForDocs(siteHtml)
+    // site/index.html uses ../node_modules/... so rewriteIndexForDocs leaves ../reveal/...
+    .replaceAll("../reveal/", "reveal/")
     .replaceAll("../node_modules/reveal.js/dist/", "reveal/dist/")
     .replaceAll("../node_modules/reveal.js/plugin/", "reveal/plugin/")
     .replaceAll("../styles/", "styles/")
