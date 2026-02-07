@@ -34,6 +34,9 @@ function main() {
   rmrf(docs);
   mkdirp(docs);
 
+  // Disable Jekyll on GitHub Pages so Reveal assets aren't munged
+  fs.writeFileSync(path.join(docs, ".nojekyll"), "", "utf8");
+
   // Copy deck content
   const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
   fs.writeFileSync(path.join(docs, "index.html"), rewriteIndexForDocs(indexHtml), "utf8");
