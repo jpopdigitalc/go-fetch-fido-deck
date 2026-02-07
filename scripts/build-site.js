@@ -37,9 +37,21 @@ function main() {
   // Disable Jekyll on GitHub Pages so Reveal assets aren't munged
   fs.writeFileSync(path.join(docs, ".nojekyll"), "", "utf8");
 
-  // Copy deck content
-  const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  fs.writeFileSync(path.join(docs, "index.html"), rewriteIndexForDocs(indexHtml), "utf8");
+  // Website (published at /)
+  const siteHtml = fs.readFileSync(path.join(root, "site", "index.html"), "utf8");
+  const rewrittenSite = rewriteIndexForDocs(siteHtml)
+    .replaceAll("../node_modules/reveal.js/dist/", "reveal/dist/")
+    .replaceAll("../node_modules/reveal.js/plugin/", "reveal/plugin/")
+    .replaceAll("../styles/", "styles/")
+    .replaceAll("../assets/", "assets/")
+    .replaceAll('href="./deck/"', 'href="deck/"')
+    .replaceAll('src="../', 'src="');
+  fs.writeFileSync(path.join(docs, "index.html"), rewrittenSite, "utf8");
+
+  // Deck (published at /deck/)
+  const deckHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  mkdirp(path.join(docs, "deck"));
+  fs.writeFileSync(path.join(docs, "deck", "index.html"), rewriteIndexForDocs(deckHtml), "utf8");
 
   copyDir(path.join(root, "styles"), path.join(docs, "styles"));
   copyDir(path.join(root, "assets"), path.join(docs, "assets"));

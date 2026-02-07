@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <title>Veterinary technician illustration (placeholder)</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d7f86" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ff7a29" stop-opacity="0.12"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="44" fill="url(#bg)"/>
+  <circle cx="256" cy="210" r="86" fill="#ffd9b3"/>
+  <path d="M172 214c18 20 46 34 84 34s66-14 84-34" stroke="#082a2c" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="220" cy="200" r="10" fill="#082a2c" fill-opacity="0.65"/>
+  <circle cx="292" cy="200" r="10" fill="#082a2c" fill-opacity="0.65"/>
+  <path d="M146 454c8-86 56-132 110-144 14 10 30 16 48 16s34-6 48-16c54 12 102 58 110 144" fill="#0d7f86" fill-opacity="0.12"/>
+  <path d="M168 456c10-76 52-112 96-122l-8 54 0 68" stroke="#0d7f86" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round"/>
+  <path d="M344 456c-10-76-52-112-96-122l8 54 0 68" stroke="#0d7f86" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round"/>
+  <path d="M220 350h72" stroke="#ff7a29" stroke-opacity="0.85" stroke-width="12" stroke-linecap="round"/>
+  <path d="M256 314v72" stroke="#ff7a29" stroke-opacity="0.85" stroke-width="12" stroke-linecap="round"/>
+  <text x="256" y="96" text-anchor="middle" font-family="ui-sans-serif, system-ui" font-size="20" fill="#082a2c" fill-opacity="0.55">Add licensed photo</text>
+</svg>
+
