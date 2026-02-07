@@ -367,14 +367,19 @@ body,
   color: rgba(8, 42, 44, 0.78);
   border-radius: 999px;
   padding: 6px 10px;
+  z-index: 60;
+  bottom: 72px; /* keep visible above footer */
 }
 
 .reveal .controls {
   color: rgba(8, 42, 44, 0.70);
+  z-index: 60;
 }
 
 .reveal .progress {
   height: 6px;
+  z-index: 60;
+  bottom: 64px; /* keep visible above footer */
 }
 
 .reveal .progress span {
@@ -387,6 +392,7 @@ body,
   left: 18px;
   right: 18px;
   bottom: 14px;
+  z-index: 40;
   display: flex;
   justify-content: space-between;
   align-items: center;
