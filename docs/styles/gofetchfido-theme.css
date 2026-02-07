@@ -10,6 +10,17 @@
   --gff-paper2: #f1fbfb;
 }
 
+/* Prevent horizontal overflow / "bleeding off page" */
+html,
+body {
+  overflow: hidden;
+}
+
+.reveal,
+.reveal * {
+  box-sizing: border-box;
+}
+
 /* Full-bleed slide background (no "boxed card" look) */
 html,
 body,
@@ -38,6 +49,7 @@ body,
   border-radius: 0;
   padding: 44px 80px 94px; /* generous edges + room for footer */
   box-shadow: none;
+  overflow: hidden;
 }
 
 /* Full-bleed image slides (let the background image own the slide) */
@@ -405,6 +417,7 @@ body,
   font-size: 16px;
   line-height: 1.1;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .gff-footer__left {
@@ -412,6 +425,7 @@ body,
   gap: 12px;
   align-items: baseline;
   min-width: 0;
+  overflow: hidden;
 }
 
 .gff-footer__name {
@@ -424,14 +438,26 @@ body,
   color: var(--gff-orange);
   font-weight: 700;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gff-footer__right {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: baseline;
   color: var(--gff-muted);
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.gff-footer__contact {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 46vw;
 }
 
 /* Print/PDF */
