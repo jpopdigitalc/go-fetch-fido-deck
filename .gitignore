@@ -1,5 +1,5 @@
 node_modules/
-dist/
+/dist/
 
 # GitHub Pages build output
 # (keep docs/ committed, ignore any OS metadata inside)
