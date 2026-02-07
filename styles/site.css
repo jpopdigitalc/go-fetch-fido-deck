@@ -1,7 +1,14 @@
 /* GO FETCH FIDO marketing site styling (Reveal.js-based) */
 
+.reveal.site {
+  /* Slightly smaller than deck so content fits */
+  font-size: 40px;
+  /* Footer safe area tuned for site slides */
+  --gff-footer-safe: 64px;
+}
+
 .site .slides section {
-  padding: 56px 88px calc(104px + var(--gff-footer-safe));
+  padding: 50px 84px calc(72px + var(--gff-footer-safe));
 }
 
 .site .hero {
@@ -26,8 +33,8 @@
 }
 
 .site .lede {
-  font-size: 1.18em;
-  line-height: 1.18;
+  font-size: 1.10em;
+  line-height: 1.16;
   color: rgba(8, 42, 44, 0.80);
   max-width: 44ch;
 }
@@ -102,7 +109,7 @@
 .site .section-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px 36px;
+  gap: 18px 28px;
   align-items: start;
 }
 
@@ -110,7 +117,7 @@
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(13, 127, 134, 0.22);
   border-radius: 18px;
-  padding: 16px 18px;
+  padding: 14px 16px;
 }
 
 .site .callout h3 {
@@ -121,6 +128,22 @@
 .site .callout p,
 .site .callout li {
   color: rgba(8, 42, 44, 0.78);
+  font-size: 0.92em;
+  line-height: 1.14;
+}
+
+.site h2 {
+  font-size: 1.65em;
+  margin-bottom: 22px;
+}
+
+.site ul,
+.site ol {
+  margin-bottom: 0.6em;
+}
+
+.site li {
+  margin: 0.22em 0;
 }
 
 .site .team-grid {
