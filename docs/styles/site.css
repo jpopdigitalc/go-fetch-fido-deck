@@ -1,7 +1,7 @@
 /* GO FETCH FIDO marketing site styling (Reveal.js-based) */
 
 .site .slides section {
-  padding: 56px 88px 104px;
+  padding: 56px 88px calc(104px + var(--gff-footer-safe));
 }
 
 .site .hero {

@@ -8,6 +8,8 @@
   --gff-muted2: rgba(8, 42, 44, 0.55);
   --gff-paper: #ffffff;
   --gff-paper2: #f1fbfb;
+  /* Extra bottom padding so fixed footer never covers content */
+  --gff-footer-safe: 92px;
 }
 
 /* Prevent horizontal overflow / "bleeding off page" */
@@ -47,7 +49,7 @@ body,
   /* No rectangle; let the viewport be the background */
   background: transparent;
   border-radius: 0;
-  padding: 44px 80px 94px; /* generous edges + room for footer */
+  padding: 44px 80px calc(94px + var(--gff-footer-safe)); /* generous edges + room for footer */
   box-shadow: none;
   overflow: hidden;
 }
@@ -210,7 +212,7 @@ body,
 
 /* Slide 6: tighten "How it works" list to fit */
 .reveal section.fit-6 {
-  padding: 40px 76px 86px;
+  padding: 40px 76px calc(86px + var(--gff-footer-safe));
 }
 
 .reveal section.fit-6 h2 {
