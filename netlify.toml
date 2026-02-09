@@ -1,0 +1,13 @@
+[build]
+  command = "npm run build:site"
+  publish = "docs"
+
+[[redirects]]
+  from = "/deck"
+  to = "/deck/"
+  status = 301
+
+[[redirects]]
+  from = "/deck/*"
+  to = "/deck/:splat"
+  status = 200
