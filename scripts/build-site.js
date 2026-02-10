@@ -70,7 +70,19 @@ function main() {
   // Deck (published at /deck/)
   const deckHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
   mkdirp(path.join(docs, "deck"));
-  fs.writeFileSync(path.join(docs, "deck", "index.html"), rewriteIndexForDocs(deckHtml), "utf8");
+  // Rewrite paths for deck subdirectory - need ../ to go up to docs root
+  const rewrittenDeck = rewriteIndexForDocs(deckHtml)
+    .replaceAll('href="styles/', 'href="../styles/')
+    .replaceAll('href="assets/', 'href="../assets/')
+    .replaceAll('src="assets/', 'src="../assets/')
+    .replaceAll('href="reveal/', 'href="../reveal/')
+    .replaceAll('src="reveal/', 'src="../reveal/')
+    .replaceAll('href=\'styles/', 'href="../styles/')
+    .replaceAll('href=\'assets/', 'href="../assets/')
+    .replaceAll('src=\'assets/', 'src="../assets/')
+    .replaceAll('href=\'reveal/', 'href="../reveal/')
+    .replaceAll('src=\'reveal/', 'src="../reveal/');
+  fs.writeFileSync(path.join(docs, "deck", "index.html"), rewrittenDeck, "utf8");
 
   copyDir(path.join(root, "styles"), path.join(docs, "styles"));
   copyDir(path.join(root, "assets"), path.join(docs, "assets"));
