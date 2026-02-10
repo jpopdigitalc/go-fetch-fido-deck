@@ -37,18 +37,35 @@ function main() {
   // Disable Jekyll on GitHub Pages so Reveal assets aren't munged
   fs.writeFileSync(path.join(docs, ".nojekyll"), "", "utf8");
 
-  // Website (published at /)
-  const siteHtml = fs.readFileSync(path.join(root, "site", "index.html"), "utf8");
-  const rewrittenSite = rewriteIndexForDocs(siteHtml)
-    // site/index.html uses ../node_modules/... so rewriteIndexForDocs leaves ../reveal/...
-    .replaceAll("../reveal/", "reveal/")
-    .replaceAll("../node_modules/reveal.js/dist/", "reveal/dist/")
-    .replaceAll("../node_modules/reveal.js/plugin/", "reveal/plugin/")
-    .replaceAll("../styles/", "styles/")
-    .replaceAll("../assets/", "assets/")
-    .replaceAll('href="./deck/"', 'href="deck/"')
-    .replaceAll('src="../', 'src="');
-  fs.writeFileSync(path.join(docs, "index.html"), rewrittenSite, "utf8");
+  // Website (published at /) - optional, create redirect if missing
+  const siteIndexPath = path.join(root, "site", "index.html");
+  if (fs.existsSync(siteIndexPath)) {
+    const siteHtml = fs.readFileSync(siteIndexPath, "utf8");
+    const rewrittenSite = rewriteIndexForDocs(siteHtml)
+      // site/index.html uses ../node_modules/... so rewriteIndexForDocs leaves ../reveal/...
+      .replaceAll("../reveal/", "reveal/")
+      .replaceAll("../node_modules/reveal.js/dist/", "reveal/dist/")
+      .replaceAll("../node_modules/reveal.js/plugin/", "reveal/plugin/")
+      .replaceAll("../styles/", "styles/")
+      .replaceAll("../assets/", "assets/")
+      .replaceAll('href="./deck/"', 'href="deck/"')
+      .replaceAll('src="../', 'src="');
+    fs.writeFileSync(path.join(docs, "index.html"), rewrittenSite, "utf8");
+  } else {
+    // Create a simple redirect page if site/index.html doesn't exist
+    const redirectHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url=./deck/">
+  <title>GO FETCH FIDO — Redirecting</title>
+</head>
+<body>
+  <p>Redirecting to <a href="./deck/">presentation</a>...</p>
+</body>
+</html>`;
+    fs.writeFileSync(path.join(docs, "index.html"), redirectHtml, "utf8");
+  }
 
   // Deck (published at /deck/)
   const deckHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");

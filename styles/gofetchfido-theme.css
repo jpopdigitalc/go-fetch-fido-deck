@@ -217,6 +217,17 @@ body,
   line-height: 1.14;
 }
 
+/* Slide 16: reduce card text sizes */
+.reveal section.fit-16 .card h3 {
+  font-size: 0.82em;
+  margin-bottom: 8px;
+}
+
+.reveal section.fit-16 .card p {
+  font-size: 0.68em;
+  line-height: 1.18;
+}
+
 .steps {
   font-size: 1.10em;
 }
