@@ -8,6 +8,7 @@
     "start": "http-server -p 8000 -c-1 .",
     "process:images": "node scripts/process-images.js",
     "build:site": "node scripts/build-site.js",
+    "build:pages:inference": "node scripts/build-site.js --inference-only",
     "export:pdf": "node scripts/export-pdf.js"
   },
   "keywords": [],

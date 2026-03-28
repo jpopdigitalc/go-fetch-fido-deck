@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      (function () {
+        var p = new URLSearchParams(window.location.search);
+        if (p.get("mobile") === "1" || p.get("mobile") === "true") {
+          document.documentElement.classList.add("force-mobile");
+        }
+      })();
+    </script>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Inference Masterclass: KV Cache + Speculative Decoding</title>
+
+    <link rel="stylesheet" href="node_modules/reveal.js/dist/reset.css" />
+    <link rel="stylesheet" href="node_modules/reveal.js/dist/reveal.css" />
+    <link rel="stylesheet" href="styles/inference-course-theme.css" />
+    <link rel="stylesheet" href="node_modules/reveal.js/plugin/highlight/monokai.css" />
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <section class="hero">
+          <div class="title-badge">Beginner + Production Track</div>
+          <h1>LLM Inference in Practice</h1>
+          <p class="subtitle">
+            Designing for speed, reliability, and efficiency at production scale.
+          </p>
+          <div class="pill-row">
+            <span class="pill">Low theory overhead</span>
+            <span class="pill">High practical signal</span>
+            <span class="pill">Latency and cost first</span>
+          </div>
+          <aside class="notes">Timing: 30s. Message: this course is about practical speed and reliability. Pause after each pill.</aside>
+        </section>
+
+        <section>
+          <h2>Agenda</h2>
+          <div class="timeline">
+            <div class="step fragment fade-up"><strong>1.</strong> Inference bottlenecks</div>
+            <div class="step fragment fade-up"><strong>2.</strong> KV cache tradeoffs</div>
+            <div class="step fragment fade-up"><strong>3.</strong> Speculative decoding mechanics</div>
+            <div class="step fragment fade-up"><strong>4.</strong> Production operating model</div>
+          </div>
+          <aside class="notes">Timing: 35-40s. Click through 1-4. One sentence per step, no deep explanation yet.</aside>
+        </section>
+
+        <section>
+          <h2>Inference Latency Fundamentals</h2>
+          <div class="callout"><strong>Remember:</strong> <span class="key">Prefill is parallel</span>, but <span class="key">decode is sequential</span>.</div>
+          <div class="grid-2">
+            <div class="card emphasis">
+              <h3>Prefill</h3>
+              <p>One big parallel pass over the prompt.</p>
+            </div>
+            <div class="card emphasis">
+              <h3>Decode</h3>
+              <p>One token at a time. This is where latency lives.</p>
+            </div>
+          </div>
+          <div class="math-box">prompt -> prefill -> decode loop (sample -> append -> repeat)</div>
+          <aside class="notes">Timing: 40s. Click moments: callout, then prefill card, then decode card. Land on: decode dominates latency.</aside>
+        </section>
+
+        <section>
+          <h2>KV Cache Fundamentals</h2>
+          <div class="grid-2">
+            <div class="card">
+              <h3>Without KV Cache</h3>
+              <p>Recompute old context every token.</p>
+            </div>
+            <div class="card">
+              <h3>With KV Cache</h3>
+              <p>Reuse old K/V. Compute only new token work.</p>
+            </div>
+          </div>
+          <aside class="notes">Timing: 30-35s. Use contrast framing: without cache vs with cache. End with "cache is mandatory for long outputs".</aside>
+        </section>
+
+        <section>
+          <h2>KV Cache Cost Model</h2>
+          <p class="muted">Memory grows roughly as:</p>
+          <div class="math-box">
+            KV bytes ~ batch_size x seq_len x num_layers x hidden_dim x 2(KV) x dtype_bytes
+          </div>
+          <div class="callout"><strong>Tradeoff:</strong> Throughput and context rise together with <span class="key">active KV memory pressure</span>.</div>
+          <div class="grid-3">
+            <div class="card"><h3>Context up</h3><p>Memory up.</p></div>
+            <div class="card"><h3>Batch up</h3><p>Throughput up, then pressure.</p></div>
+            <div class="card"><h3>Precision down</h3><p>Capacity back.</p></div>
+          </div>
+          <aside class="notes">Timing: 45s. Point to formula once, then only interpret trend directions (up/up/down). Do not derive math live.</aside>
+        </section>
+
+        <section>
+          <h2>Common Failure Modes</h2>
+          <div class="grid-2">
+            <div class="card danger">
+              <h3>Long-context whales</h3>
+              <p>A few giant requests crush shared latency.</p>
+            </div>
+            <div class="card danger">
+              <h3>Scheduler unfairness</h3>
+              <p>Big prefills starve interactive decode traffic.</p>
+            </div>
+          </div>
+          <aside class="notes">Timing: 30s. These are p99 killers. Mention one real symptom each: queue spikes and user-visible slowness.</aside>
+        </section>
+
+        <section>
+          <h2>Speculative Decoding Overview</h2>
+          <div class="callout"><strong>Main win:</strong> Accept multiple tokens per verifier pass when draft and target agree.</div>
+          <div class="grid-2">
+            <div class="card emphasis">
+              <h3>Draft model</h3>
+              <p>Small and fast. Proposes K next tokens.</p>
+            </div>
+            <div class="card emphasis">
+              <h3>Verifier model</h3>
+              <p>Large model checks and accepts valid prefix.</p>
+            </div>
+          </div>
+          <div class="math-box">Speedup = more accepted tokens per verifier step</div>
+          <aside class="notes">Timing: 40s. Explain draft/verifier in plain words. Emphasize accepted prefix is the key lever.</aside>
+        </section>
+
+        <section>
+          <h2>Verification Loop</h2>
+          <ol>
+            <li class="fragment fade-up">Draft proposes K tokens.</li>
+            <li class="fragment fade-up">Verifier checks the path.</li>
+            <li class="fragment fade-up">Accept until first mismatch.</li>
+            <li class="fragment fade-up">Verifier emits next token, repeat.</li>
+          </ol>
+          <p class="muted">Higher agreement -> higher speedup.</p>
+          <aside class="notes">Timing: 35-40s. Click each step. Keep rhythm tight: propose, verify, accept, continue.</aside>
+        </section>
+
+        <section>
+          <h2>High-Upside Conditions</h2>
+          <div class="grid-3">
+            <div class="card"><h3>Expensive verifier</h3><p>More upside.</p></div>
+            <div class="card"><h3>Good draft</h3><p>Higher acceptance ratio.</p></div>
+            <div class="card"><h3>Interactive traffic</h3><p>Faster perceived UX.</p></div>
+          </div>
+          <aside class="notes">Timing: 30s. Quick triad. If asked "best case?", answer: expensive verifier + high agreement.</aside>
+        </section>
+
+        <section>
+          <h2>Low-Upside Conditions</h2>
+          <div class="callout"><strong>Watch this metric:</strong> If <span class="key">acceptance ratio</span> is low, speculative decoding can add overhead instead of speed.</div>
+          <div class="grid-2">
+            <div class="card warning">
+              <h3>Low acceptance ratio</h3>
+              <p>Draft work is mostly wasted.</p>
+            </div>
+            <div class="card warning">
+              <h3>Poorly tuned K</h3>
+              <p>Too large K increases rejection cost.</p>
+            </div>
+          </div>
+          <aside class="notes">Timing: 35s. Center on acceptance ratio threshold behavior. Mention K tuning as second-order control.</aside>
+        </section>
+
+        <section>
+          <h2>Tuning Priorities</h2>
+          <div class="grid-3">
+            <div class="card"><h3>Draft model</h3><p>Small, but distribution-aligned.</p></div>
+            <div class="card"><h3>Draft length K</h3><p>Tune by acceptance + p99.</p></div>
+            <div class="card"><h3>Traffic class</h3><p>Enable where benefit is proven.</p></div>
+          </div>
+          <aside class="notes">Timing: 35s. This is the operator slide: model choice, K, and scoped rollout by route.</aside>
+        </section>
+
+        <section>
+          <h2>Core Metrics</h2>
+          <ul class="checklist">
+            <li class="fragment fade-up"><strong class="key">TTFT</strong> - first token latency</li>
+            <li class="fragment fade-up"><strong class="key">TPOT</strong> - per-token decode latency</li>
+            <li class="fragment fade-up"><strong>Tokens/sec</strong> - throughput per GPU</li>
+            <li class="fragment fade-up"><strong class="key">Acceptance ratio</strong> - spec decode quality</li>
+            <li class="fragment fade-up"><strong class="key">Active KV bytes</strong> - memory pressure</li>
+            <li class="fragment fade-up"><strong class="key">p95 / p99</strong> - user pain at tail</li>
+          </ul>
+          <aside class="notes">Timing: 45s. Click top-to-bottom. Tell audience to instrument these before tuning anything else.</aside>
+        </section>
+
+        <section>
+          <h2>Proven System Patterns</h2>
+          <div class="grid-2">
+            <div class="card"><h3>Paged KV cache</h3><p>Reduce fragmentation.</p></div>
+            <div class="card"><h3>Prefix caching</h3><p>Reuse common prompt blocks.</p></div>
+            <div class="card"><h3>Continuous batching</h3><p>Keep GPUs busy fairly.</p></div>
+            <div class="card"><h3>Chunked prefill</h3><p>Protect interactive decode traffic.</p></div>
+          </div>
+          <aside class="notes">Timing: 35s. Pattern library: one line each, no details. Offer deep dive only in Q&A.</aside>
+        </section>
+
+        <section>
+          <h2>Rollout Sequence</h2>
+          <ol>
+            <li class="fragment fade-up">Ship KV cache + batching first.</li>
+            <li class="fragment fade-up">Add queue policies and hard token limits.</li>
+            <li class="fragment fade-up">Roll out speculative decode on one route.</li>
+            <li class="fragment fade-up">Scale only if acceptance and p99 both improve.</li>
+          </ol>
+          <aside class="notes">Timing: 40s. This is your implementation order. Pause after step 4 and repeat "both improve".</aside>
+        </section>
+
+        <section>
+          <h2>Summary</h2>
+          <div class="callout"><strong>Takeaway:</strong> Optimize for <span class="key">latency</span>, <span class="key">memory efficiency</span>, and <span class="key">acceptance quality</span> together.</div>
+          <div class="grid-3">
+            <div class="card"><h3>Inference logic</h3><p>Parallel prefill, sequential decode.</p></div>
+            <div class="card"><h3>KV cache</h3><p>Speed for memory.</p></div>
+            <div class="card"><h3>Spec decode</h3><p>Fast when models agree.</p></div>
+          </div>
+          <p class="muted">You now have the intuition and production levers.</p>
+          <aside class="notes">Timing: 30s close. Re-state 3 words: latency, memory, acceptance. Then open for questions.</aside>
+        </section>
+
+        <section data-visibility="hidden">
+          <h2>Presenter Cheatsheet</h2>
+          <div class="grid-2">
+            <div class="card">
+              <h3>Suggested Runtime</h3>
+              <ul>
+                <li><strong>Short version:</strong> 8-10 minutes</li>
+                <li><strong>Standard version:</strong> 12-15 minutes</li>
+                <li><strong>With Q&amp;A:</strong> 18-20 minutes</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Pacing Rule</h3>
+              <ul>
+                <li>30-45s per slide</li>
+                <li>Do not derive equations live</li>
+                <li>Use examples only when asked</li>
+              </ul>
+            </div>
+          </div>
+          <div class="grid-3">
+            <div class="card"><h3>Section 1</h3><p>Inference logic + KV basics<br /><strong>~4 min</strong></p></div>
+            <div class="card"><h3>Section 2</h3><p>Speculative decoding<br /><strong>~4 min</strong></p></div>
+            <div class="card"><h3>Section 3</h3><p>Metrics + rollout recipe<br /><strong>~4 min</strong></p></div>
+          </div>
+          <aside class="notes">
+            Hidden presenter slide. Rehearse mobile layout on desktop: append ?mobile=1 or ?mobile=true to the URL.
+            Keep audience flow ending on Summary.
+          </aside>
+        </section>
+      </div>
+
+      <div class="footer-brand" aria-hidden="true">
+        <div><span class="name">LLM Inference Course</span> · Beginner + Production</div>
+        <div>Spec Decoding · KV Cache · Inference Ops</div>
+      </div>
+    </div>
+
+    <script src="node_modules/reveal.js/dist/reveal.js"></script>
+    <script src="node_modules/reveal.js/plugin/notes/notes.js"></script>
+    <script src="node_modules/reveal.js/plugin/search/search.js"></script>
+    <script src="node_modules/reveal.js/plugin/zoom/zoom.js"></script>
+    <script src="node_modules/reveal.js/plugin/highlight/highlight.js"></script>
+    <script>
+      var params = new URLSearchParams(window.location.search);
+      var forceMobile =
+        params.get("mobile") === "1" || params.get("mobile") === "true";
+
+      function useMobileLayout() {
+        return forceMobile || window.matchMedia("(max-width: 899px)").matches;
+      }
+
+      function revealLayoutOptions() {
+        var m = useMobileLayout();
+        return {
+          width: m ? 390 : 1280,
+          height: m ? 844 : 720,
+          margin: m ? 0.05 : 0.08,
+          minScale: m ? 0.28 : 0.12,
+          maxScale: m ? 1.35 : 1.7,
+        };
+      }
+
+      Reveal.initialize(
+        Object.assign(
+          {
+            hash: true,
+            slideNumber: true,
+            progress: true,
+            controls: true,
+            controlsLayout: useMobileLayout() ? "bottom-right" : "edges",
+            center: false,
+            transition: "slide",
+            plugins: [RevealNotes, RevealSearch, RevealZoom, RevealHighlight],
+          },
+          revealLayoutOptions()
+        )
+      );
+
+      if (!forceMobile) {
+        window
+          .matchMedia("(max-width: 899px)")
+          .addEventListener("change", function () {
+            Reveal.configure(
+              Object.assign({ controlsLayout: useMobileLayout() ? "bottom-right" : "edges" }, revealLayoutOptions())
+            );
+            Reveal.layout();
+          });
+      }
+    </script>
+  </body>
+</html>

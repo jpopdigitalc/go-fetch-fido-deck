@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      (function () {
+        var p = new URLSearchParams(window.location.search);
+        if (p.get("mobile") === "1" || p.get("mobile") === "true") {
+          document.documentElement.classList.add("force-mobile");
+        }
+      })();
+    </script>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#ebe4d6" />
+    <title>AMD Quark — Quantizing Diffusion Without Losing the Plot</title>
+
+    <link rel="stylesheet" href="node_modules/reveal.js/dist/reset.css" />
+    <link rel="stylesheet" href="node_modules/reveal.js/dist/reveal.css" />
+    <link rel="stylesheet" href="styles/quark-natural-theme.css" />
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <section class="hero">
+          <div class="title-badge">AMD Quark 0.11.1 · PyTorch · Diffusers</div>
+          <h1>Quantize the U-Net,<br />keep the vibe</h1>
+          <p class="subtitle">
+            Synthesis of <strong>Briefing Doc: Quantizing Diffusion Models with AMD Quark</strong> (PDF in this folder) plus
+            the official diffusion tutorial — why Stable Diffusion–class stacks hurt at scale, and how FP16 → FP8/INT8 buys
+            speed without necessarily trashing the pixels.
+          </p>
+          <div class="pill-row">
+            <span class="pill">Weight-first wins</span>
+            <span class="pill">Recalibrate seriously</span>
+            <span class="pill">Ship ONNX when you must</span>
+          </div>
+          <aside class="notes">
+            30s open. Primary source order: (1) PDF briefing in revealjs-sdk, (2) AMD Quark diffusion tutorial
+            (quark.docs.amd.com). Layout follows inference-course.html in this SDK.
+          </aside>
+        </section>
+
+        <section>
+          <h2>Agenda</h2>
+          <div class="timeline">
+            <div class="step fragment fade-up"><strong>1.</strong> Why diffusion is a bandwidth problem dressed as “art”</div>
+            <div class="step fragment fade-up"><strong>2.</strong> Where Quark sits in the stack</div>
+            <div class="step fragment fade-up"><strong>3.</strong> The quantization loop (spec → calibrate → swap U-Net)</div>
+            <div class="step fragment fade-up"><strong>4.</strong> Quality, latency, and the ONNX / Netron reality check</div>
+          </div>
+          <aside class="notes">40s. Four beats only — depth lives in the next slides, not here.</aside>
+        </section>
+
+        <section class="slide-diffusion-cost">
+          <header class="slide-diffusion-cost__intro">
+            <h2>Diffusion is not one forward pass</h2>
+            <p class="muted slide-diffusion-cost__lede">
+              One image = many timesteps through the denoiser — closer to a loop than a single matmul festival.
+            </p>
+          </header>
+
+          <div class="slide-diffusion-cost__band">
+            <div class="callout slide-diffusion-cost__callout">
+              <p class="slide-diffusion-cost__callout-label">The efficiency insult</p>
+              <p>
+                You pay for <span class="key">dozens to hundreds</span> of full U-Net evaluations per sample. LLM
+                “prefill vs decode” intuition only gets you halfway — here the expensive bit is a
+                <span class="key">sequential denoise loop</span>, repeated until the sampler says stop.
+              </p>
+            </div>
+            <div class="math-box slide-diffusion-cost__model" aria-label="Cost model">
+              <span class="slide-diffusion-cost__model-kicker">Rough mental model</span>
+              <div class="slide-diffusion-cost__model-line">
+                wall time ≈ <em>T</em> steps × ( U-Net(latent, <em>t</em>, cond) + overhead )
+              </div>
+              <p class="slide-diffusion-cost__model-hint muted">
+                Quantization mostly squeezes the middle term — same <em>T</em>, cheaper per step.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid-2 slide-diffusion-cost__split">
+            <div class="card emphasis slide-diffusion-cost__card">
+              <h3>What users feel</h3>
+              <p>Seconds to tens of seconds waiting. Power draw. VRAM spikes. Queue depth when you batch traffic.</p>
+            </div>
+            <div class="card emphasis slide-diffusion-cost__card">
+              <h3>What you actually optimize</h3>
+              <p>Per-step matmul and memory traffic — and whether your product can live with fewer steps or smaller latents.</p>
+            </div>
+          </div>
+          <aside class="notes">
+            Land the emotional truth: latency is steps × per-step cost. Quantization attacks the per-step term.
+          </aside>
+        </section>
+
+        <section>
+          <h2>Latent diffusion, decomposed</h2>
+          <p class="muted">
+            Briefing vocabulary: <strong>forward noising</strong> (Gaussian noise until structure collapses) vs.
+            <strong>backward denoising</strong> (U-Net predicts noise step-by-step). Stable Diffusion ties that loop to three
+            modules:
+          </p>
+          <div class="grid-3">
+            <div class="card">
+              <h3>Text encoder</h3>
+              <p>CLIP-style: prompt → conditioning vectors. Important, but not always the FLOP king.</p>
+            </div>
+            <div class="card">
+              <h3>VAE (autoencoder)</h3>
+              <p>Pixels ↔ latent tiles. Usually cheaper than the main denoiser at typical resolutions.</p>
+            </div>
+            <div class="card">
+              <h3>U-Net denoiser</h3>
+              <p>The iterative workhorse. This is where Quark’s tutorial spends its quantization budget.</p>
+            </div>
+          </div>
+          <div class="math-box">pixels —[encode]→ latents —[U-Net × T steps]→ latents —[decode]→ pixels</div>
+          <aside class="notes">
+            AMD’s doc walks SD components explicitly; use this slide to anchor “what we’re allowed to ignore first.”
+          </aside>
+        </section>
+
+        <section>
+          <h2>Why weight quantization on the U-Net</h2>
+          <div class="callout">
+            <strong>Tutorial choice, engineering choice:</strong> quantize <span class="key">U-Net weights</span> first —
+            that’s where the tutorial expects the <span class="key">most performance upside</span> vs. text encoder or
+            VAE.
+          </div>
+          <ul class="checklist">
+            <li class="fragment fade-up">Smaller weights → less DRAM traffic → faster matmuls on friendly kernels.</li>
+            <li class="fragment fade-up">You keep the same sampling schedule; you’re not redesigning the sampler (yet).</li>
+            <li class="fragment fade-up">Activations still matter — but weight-only is a sharp first lever.</li>
+          </ul>
+          <aside class="notes">If someone asks “why not FP16 everywhere?” — answer: you can, but you’re leaving bandwidth on the table.</aside>
+        </section>
+
+        <section>
+          <h2>What AMD Quark is (no mythology)</h2>
+          <p>
+            <strong>Quark 0.11.1</strong> (briefing baseline) is AMD’s model optimization toolkit: PyTorch and ONNX paths,
+            multiple integer and float-low-bit dtypes, export — quantization as something you <em>run in a lab notebook</em>,
+            not a slide-deck fairy tale.
+          </p>
+          <div class="grid-2">
+            <div class="card">
+              <h3>You bring</h3>
+              <p>A real model (here: <code>diffusers</code> pipeline), a GPU (ROCm or CUDA per docs), and calibration data.</p>
+            </div>
+            <div class="card">
+              <h3>Quark brings</h3>
+              <p>Specs, layer configs, a <code>ModelQuantizer</code>, export hooks — the boring glue that ships.</p>
+            </div>
+          </div>
+          <p class="muted">
+            Official write-up: <a href="https://www.amd.com/en/developer/resources/technical-articles/2025/amd-quark-model-optimization-library-now-available-as-open-sourc.html">AMD Quark open-source announcement</a>
+            · Docs hub: <a href="https://quark.docs.amd.com/latest/index.html">quark.docs.amd.com</a>
+          </p>
+          <aside class="notes">Cite AMD’s own article for “what/why open” — keeps you out of fanboy territory.</aside>
+        </section>
+
+        <section>
+          <h2>Quantization in one breath</h2>
+          <div class="callout">
+            <strong>Idea:</strong> store weights (and sometimes activations) in <span class="key">fewer bits</span> with
+            scales/zero-points — trading representational headroom for <span class="key">speed and footprint</span>.
+          </div>
+          <div class="grid-2">
+            <div class="card warning">
+              <h3>What breaks</h3>
+              <p>Outlier-heavy layers, sharp attention stats, anything that needed FP dynamic range “for free.”</p>
+            </div>
+            <div class="card">
+              <h3>What saves you</h3>
+              <p>Calibration (representative inputs), symmetric vs asymmetric choices, and sometimes FP8 instead of INT8.</p>
+            </div>
+          </div>
+          <aside class="notes">Point to Quark’s intro doc for bit-level intuition if the room wants homework.</aside>
+        </section>
+
+        <section>
+          <h2>The Quark API shape you’ll actually type</h2>
+          <p class="muted">Pattern from the diffusion tutorial — slightly cleaned for slides:</p>
+          <div class="math-box">
+            Int8PerTensorSpec(observer_method="min_max", scale_type="float", is_dynamic=False, symmetric=True,
+            round_method="half_even") → QLayerConfig(weight=…) → QConfig(global_quant_config=…) → ModelQuantizer(config)
+          </div>
+          <div class="grid-2">
+            <div class="card emphasis">
+              <h3>Spec</h3>
+              <p>Answers “how are we snapping weights to low-bit grids?”</p>
+            </div>
+            <div class="card emphasis">
+              <h3>Quantizer</h3>
+              <p>Answers “run that policy across modules and give me a model I can drop back into the pipeline.”</p>
+            </div>
+          </div>
+          <aside class="notes">Don’t read the spec string aloud — it’s wallpaper. Emphasize observer + symmetric INT8 defaults.</aside>
+        </section>
+
+        <section>
+          <h2>Precision ladder (briefing chart, lived experience)</h2>
+          <p class="muted">Strategic U-Net weight quantization — quality vs. payoff, per the briefing’s synthesis:</p>
+          <div class="grid-3">
+            <div class="card emphasis">
+              <h3>FP16</h3>
+              <p><strong>Quality:</strong> baseline (high). <strong>Perf:</strong> standard reference.</p>
+            </div>
+            <div class="card emphasis">
+              <h3>FP8</h3>
+              <p><strong>Quality:</strong> near-identical to FP16 in practice. <strong>Perf:</strong> high upside.</p>
+            </div>
+            <div class="card emphasis">
+              <h3>INT8</h3>
+              <p><strong>Quality:</strong> slight variations — smaller representable range. <strong>Perf:</strong> very high.</p>
+            </div>
+          </div>
+          <div class="callout">
+            <strong>Briefing verdict:</strong> FP8 is the <span class="key">sweet spot</span> for “fast + hard to see the
+            damage”; INT8 is the <span class="key">speed demon</span> that demands adult supervision on calibration.
+          </div>
+          <p class="muted">
+            Code fork: <code>Int8PerTensorSpec</code> vs <code>FP8E4M3PerTensorSpec</code> — same Quark skeleton, different
+            pain/return curve.
+          </p>
+          <aside class="notes">Tutorial side-by-side grids back the FP8 story; use them if anyone challenges “near-identical.”</aside>
+        </section>
+
+        <section>
+          <h2>Baseline: honest FP16 (or BF16) generation</h2>
+          <p class="muted">Tutorial starts from a real <code>diffusers</code> pipeline — you need a reproducible anchor.</p>
+          <div class="math-box">
+            pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)<br />
+            pipe = pipe.to(device)<br />
+            images = pipe(prompt=..., num_inference_steps=50, guidance_scale=7.5, generator=seeded).images
+          </div>
+          <div class="callout">
+            <strong>Why bother:</strong> if you can’t A/B at the <span class="key">same seed + steps + guidance</span>, you’re
+            arguing about weather, not quantization.
+          </div>
+          <aside class="notes">Mention fixed generator seed from the tutorial — it’s the adult-in-the-room move.</aside>
+        </section>
+
+        <section>
+          <h2>Calibration &amp; recalibration (briefing workflow)</h2>
+          <div class="callout warning">
+            <strong>Quantization eats accuracy.</strong> The briefing frames recovery as <span class="key">rigorous
+            recalibration</span> — representative data, then weight adjustment, then proof against a baseline. Skip any leg
+            of that tripod and you’re doing vibe-based ML.
+          </div>
+          <ol>
+            <li class="fragment fade-up">
+              <strong>Calibration data</strong> — e.g. LAION-400M class datasets; HF login / gated access per docs.
+            </li>
+            <li class="fragment fade-up">
+              <strong>Weight adjustment</strong> — observers + Quark’s quant path recover what precision lopped off (briefing
+              calls this “finetuning” in the broad sense; the tutorial implements it as calibrated <code>quantize_model</code>).
+            </li>
+            <li class="fragment fade-up">
+              <strong>Image A/B</strong> — same prompt distribution, seeded runs, honest visual diff vs. FP16.
+            </li>
+          </ol>
+          <p class="muted">Production move: swap LAION for <em>your</em> domain tensors when you can — the briefing still
+            applies: representative, diverse, not one lazy folder of thumbnails.</p>
+          <aside class="notes">laion/laion400m: access friction + policy — say it out loud. Clarify in Q&amp;A: PTQ calibration ≠ full retrain unless you add that.</aside>
+        </section>
+
+        <section>
+          <h2>Swap in the quantized U-Net</h2>
+          <div class="math-box">
+            model = pipe.unet<br />
+            quantizer = ModelQuantizer(quant_config)<br />
+            quant_model = quantizer.quantize_model(model, calib_dataloader)<br />
+            pipe.unet = quant_model
+          </div>
+          <div class="grid-2">
+            <div class="card danger">
+              <h3>Don’t confuse outputs</h3>
+              <p>If you quantize the wrong submodule, you’ll “succeed” and still measure nothing useful.</p>
+            </div>
+            <div class="card">
+              <h3>Do measure</h3>
+              <p>Wall time per image, VRAM high-water, and a blind A/B folder your team actually argues over.</p>
+            </div>
+          </div>
+          <aside class="notes">This is the hinge slide — everything before is prep; everything after is validation + export.</aside>
+        </section>
+
+        <section>
+          <h2>Evaluate like someone who ships</h2>
+          <div class="grid-3">
+            <div class="card emphasis">
+              <h3>Visual</h3>
+              <p>Faces, hands, fine text, high-frequency textures — where INT8 ghosts show up first.</p>
+            </div>
+            <div class="card emphasis">
+              <h3>Temporal / seed sweeps</h3>
+              <p>One lucky seed is not a pass; scan a dozen.</p>
+            </div>
+            <div class="card emphasis">
+              <h3>Hardware truth</h3>
+              <p>Speedups are <em>kernel and GPU dependent</em> — profile on the silicon you rent.</p>
+            </div>
+          </div>
+          <p class="muted">Tutorial expectation: quantized run should be noticeably faster than FP16 baseline on GPU.</p>
+          <aside class="notes">If asked about metrics: CLIP score, FID, etc. — optional; eyes + latency first for decks.</aside>
+        </section>
+
+        <section>
+          <h2>Freeze + ONNX export</h2>
+          <p class="muted">Tutorial path: freeze the quantized module, dummy inputs, then <code>export_onnx</code>.</p>
+          <div class="math-box">
+            frozen = quantizer.freeze(quant_model)<br />
+            export_onnx(frozen, export_path, input_args) → quark_model.onnx
+          </div>
+          <div class="callout">
+            <strong>Interop story:</strong> ONNX moves graphs between frameworks (e.g. PyTorch → ONNX Runtime). The briefing
+            explicitly calls out deployment across <span class="key">AMD Ryzen AI</span> and <span class="key">AMD
+            Instinct</span>-class accelerators — plus the usual ORT / edge runtime suspects.
+          </div>
+          <p class="muted">HF Optimum ONNX guides help when the runner isn’t Torch anymore.</p>
+          <aside class="notes">Dummy latents / timestep / encoder hidden states must match the architecture you export.</aside>
+        </section>
+
+        <section>
+          <h2>Netron will show Q/DQ nodes — read that ethically</h2>
+          <div class="callout danger">
+            <strong>Briefing + tutorial honesty bomb:</strong> Quark often uses <span class="key">pseudo-quantization</span>:
+            lower-precision values carried inside original wider dtypes (think trailing-zero padding), so
+            <span class="key">file size may not shrink</span> until you land in a format that truly packs smaller types.
+            Netron shows explicit <span class="key">quantization / dequantization</span> blocks in the graph.
+          </div>
+          <p class="muted">
+            Visualize with Netron (<code>netron.start("export_path/quark_model.onnx")</code> in the docs) — zoom until your
+            eyes hurt; the graph is huge.
+          </p>
+          <aside class="notes">This slide prevents you from getting roasted in Q&A by someone who opened the ONNX once.</aside>
+        </section>
+
+        <section>
+          <h2>Operator checklist (from the docs school of hard knocks)</h2>
+          <div class="grid-2">
+            <div class="card warning">
+              <h3>Environment</h3>
+              <p>
+                Briefing is blunt: for diffusion, a <span class="key">GPU is mandatory</span> — ROCm (AMD) or CUDA (NVIDIA).
+                Windows: plan on WSL/Ubuntu per AMD’s setup notes.
+              </p>
+            </div>
+            <div class="card warning">
+              <h3>PyTorch builds</h3>
+              <p>Match ROCm or CUDA wheels to your stack; Quark is not a substitute for a broken driver story.</p>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="card">
+              <h3>HF access</h3>
+              <p>
+                Models (e.g. SD v1-5) + calibration sets (e.g. LAION-400M) need a <span class="key">Hugging Face
+                login</span> when gated. Point <code>HUGGINGFACE_HUB_CACHE</code> / dataset cache somewhere sane if you’re
+                pulling big iron.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Model IDs</h3>
+              <p>Changing checkpoint shapes means revisiting ONNX dummy tensors — obvious, often forgotten.</p>
+            </div>
+          </div>
+          <aside class="notes">Pull WSL + ROCm/CUDA notes straight from AMD’s installation section — saves support debt.</aside>
+        </section>
+
+        <section>
+          <h2>When Quark (or quantization) is the wrong hero</h2>
+          <ul class="checklist">
+            <li class="fragment fade-up">You’re batch-size 1 and bound by VAE or I/O — fix the actual bottleneck first.</li>
+            <li class="fragment fade-up">Your “quality bar” is luxury-brand photography and INT8 is audibly ugly — don’t gaslight the art director.</li>
+            <li class="fragment fade-up">You need true on-disk tiny weights for edge — plan compression + format goals explicitly.</li>
+          </ul>
+          <div class="callout">
+            <strong>Sharp takeaway:</strong> Quark gives you <span class="key">levers</span>; it doesn’t revoke physics.
+          </div>
+          <aside class="notes">This slide is how you sound like a principal engineer, not a toolchain tourist.</aside>
+        </section>
+
+        <section>
+          <h2>Summary</h2>
+          <div class="callout">
+            <strong>Briefing closes with three claims</strong> — and they’re still true on a whiteboard: FP8 balances speed
+            with barely visible loss; INT8 is fastest but wants careful calibration; <span class="key">targeted U-Net
+            optimization</span> is the efficient compression path in latent diffusion.
+          </div>
+          <div class="grid-3">
+            <div class="card"><h3>Why</h3><p>Iterative denoise multiplies cost; low-bit U-Net weights cut the per-step tax.</p></div>
+            <div class="card"><h3>How</h3><p>Spec → <code>QConfig</code> → <code>ModelQuantizer</code> → recalibrated U-Net in the pipeline.</p></div>
+            <div class="card"><h3>Proof</h3><p>Images, wall time, ONNX + Netron — receipts in that order.</p></div>
+          </div>
+          <aside class="notes">Close cold. SmoothQuant / QuaRot / activation quant: bonus Q&amp;A if the room’s spicy.</aside>
+        </section>
+
+        <section>
+          <h2>Links worth bookmarking</h2>
+          <ul class="checklist">
+            <li>
+              <strong>Primary brief (local):</strong>
+              <code>Briefing Doc_ Quantizing Diffusion Models with AMD Quark.pdf</code> — in the <code>revealjs-sdk</code>
+              folder next to this deck.
+            </li>
+            <li>
+              <strong>Diffusion tutorial (hands-on walkthrough):</strong>
+              <a href="https://quark.docs.amd.com/latest/tutorials/torch/diffusion_tutorial/diffusion_tutorial.html">Quantizing a Diffusion Model using Quark</a>
+            </li>
+            <li>
+              <strong>Quark for PyTorch basics:</strong>
+              <a href="https://quark.docs.amd.com/latest/pytorch/basic_usage_pytorch.html">basic_usage_pytorch</a>
+            </li>
+            <li>
+              <strong>Repo + issues:</strong> <a href="https://github.com/amd/quark">github.com/amd/quark</a>
+            </li>
+            <li>
+              <strong>Pre-quantized diffusion HF collection:</strong>
+              <a href="https://huggingface.co/collections/amd/quark-quantized-diffusion-models">AMD Quark quantized diffusion models</a>
+            </li>
+          </ul>
+          <p class="muted">Install: <code>pip install amd-quark</code> — pair with a correct Torch build for your GPU stack.</p>
+          <aside class="notes">HF collection is great for “show me a finished artifact” demos.</aside>
+        </section>
+
+        <section data-visibility="hidden">
+          <h2>Presenter cheatsheet</h2>
+          <div class="grid-2">
+            <div class="card">
+              <h3>Runtime</h3>
+              <ul>
+                <li><strong>Tight:</strong> 12–15 min (skip Netron deep dive)</li>
+                <li><strong>Standard:</strong> 18–22 min</li>
+                <li><strong>Spicy Q&amp;A:</strong> +10 min on activations + hardware kernels</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Sources + SDK</h3>
+              <ul>
+                <li>Briefing PDF drives structure and trade framing; tutorial fills API details.</li>
+                <li>Deck layout matches <code>inference-course.html</code> conventions.</li>
+                <li>Mobile: <code>?mobile=1</code> on the URL.</li>
+              </ul>
+            </div>
+          </div>
+          <aside class="notes">Hidden slide — audience should end on Summary or Links.</aside>
+        </section>
+      </div>
+
+      <div class="footer-brand" aria-hidden="true">
+        <div><span class="name">AMD Quark × Diffusion</span> · Quantization that survives Q&amp;A</div>
+        <div>U-Net · Calibrate · Measure · ONNX</div>
+      </div>
+    </div>
+
+    <script src="node_modules/reveal.js/dist/reveal.js"></script>
+    <script src="node_modules/reveal.js/plugin/notes/notes.js"></script>
+    <script src="node_modules/reveal.js/plugin/search/search.js"></script>
+    <script src="node_modules/reveal.js/plugin/zoom/zoom.js"></script>
+    <script src="node_modules/reveal.js/plugin/highlight/highlight.js"></script>
+    <script>
+      var params = new URLSearchParams(window.location.search);
+      var forceMobile =
+        params.get("mobile") === "1" || params.get("mobile") === "true";
+
+      function useMobileLayout() {
+        return forceMobile || window.matchMedia("(max-width: 899px)").matches;
+      }
+
+      function revealLayoutOptions() {
+        var m = useMobileLayout();
+        return {
+          width: m ? 390 : 1280,
+          height: m ? 844 : 720,
+          margin: m ? 0.05 : 0.08,
+          minScale: m ? 0.28 : 0.12,
+          maxScale: m ? 1.35 : 1.7,
+        };
+      }
+
+      Reveal.initialize(
+        Object.assign(
+          {
+            hash: true,
+            slideNumber: true,
+            progress: true,
+            controls: true,
+            controlsLayout: useMobileLayout() ? "bottom-right" : "edges",
+            center: false,
+            transition: "slide",
+            plugins: [RevealNotes, RevealSearch, RevealZoom, RevealHighlight],
+          },
+          revealLayoutOptions()
+        )
+      );
+
+      if (!forceMobile) {
+        window
+          .matchMedia("(max-width: 899px)")
+          .addEventListener("change", function () {
+            Reveal.configure(
+              Object.assign({ controlsLayout: useMobileLayout() ? "bottom-right" : "edges" }, revealLayoutOptions())
+            );
+            Reveal.layout();
+          });
+      }
+    </script>
+  </body>
+</html>
